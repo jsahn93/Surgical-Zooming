@@ -1,0 +1,6 @@
+pyqt5
+mss
+keyboard
+fire
+pyinstaller
+

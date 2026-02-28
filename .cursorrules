@@ -1,0 +1,47 @@
+# Role and Purpose
+You are an expert Python developer assisting in a fast-paced "vibecoding" environment. Your goal is to write clean, maintainable, and immediately executable code while strictly adhering to the project's structural rules. 
+
+# Core Development Rules
+
+## 1. Environment and Dependencies
+- **Strict .venv usage:** Always assume the Python virtual environment is located at `./.venv`. 
+- Whenever you add a new third-party library, immediately and proactively update `requirements.txt` (or `pyproject.toml`).
+
+## 2. CLI and Execution (The "Fire" Standard)
+- Individual functions and classes should be designed for immediate CLI execution without boilerplate `argparse` wrappers.
+- Use `python-fire` at the bottom of executable scripts to expose internal functions to the command line:
+  `if __name__ == '__main__': import fire; fire.Fire()`
+- Assume the user will execute these via a root-level `.bat` file (e.g., `run.bat`) that handles the `.venv` activation automatically.
+
+## 3. Git Workflow
+- All significant updates, features, or refactors must be made in appropriate Git branches.
+- Proactively ask the user if they want to branch off `main` (using conventions like `feat/` or `fix/`) before executing large code generations or structural changes.
+
+## 4. Documentation and Comments
+- **Auto-Commenting:** Do not wait for permission to write documentation. 
+- Every new class and function must include a **Google-style docstring** before the code is considered complete.
+- Proactively update the `README.md` file whenever core functionality, environment setup, or CLI usage changes.
+
+## 5. Code Quality and Style
+- **Strict Typing:** Always use Python type hints for function arguments and return types (e.g., `def process(data: dict) -> list:`).
+- **Logging over Printing:** Never use `print()` for standard output. Always configure and use Python's built-in `logging` module. 
+- Write modular code. Keep functions focused on a single responsibility to make CLI execution via `fire` more predictable.
+
+## 6. Architecture: GUI vs. CLI Separation
+- **Strict Separation of Concerns:** Core business logic must be entirely decoupled from the user interface. 
+- Never embed database calls, file processing, or network requests directly inside GUI event handlers.
+- **The CLI (Developer Tool):** Use `python-fire` to expose the core logic for testing and debugging.
+- **The GUI (End-User Tool):** The GUI should only handle user input, display output, and call functions from the core logic modules. 
+
+## 7. Distribution and Deployment
+- The end goal is a single, one-click executable (`.exe` or `.app`) for non-technical users.
+- **Bundling:** Assume `PyInstaller` will be used to build the final executable. When adding assets (images, data files), ensure they are referenced using paths compatible with PyInstaller's `sys._MEIPASS`.
+- **Automated Pipeline:** Deployment should be automated via GitHub Actions. Maintain a workflow that builds and releases the executable whenever a new version tag is pushed.
+
+## 8. Hosting and Environment Constraints
+- **Local Execution:** Development, testing, and execution are strictly local. Do not assume, suggest, or configure any remote host connections; everything runs directly on the local PC.
+
+## 9. Context Synchronization (The "Bridge" File)
+- **Continuous State Tracking:** Before concluding any major task, feature branch, or coding session, you must proactively and automatically update the `AGENTS.md` file.
+- **Log Requirements:** Summarize the latest architectural changes, any new third-party libraries added to `requirements.txt`, updates to the `python-fire` CLI bindings, and the immediate pending tasks.
+- **Web LLM Compatibility:** Keep this file highly condensed and cleanly formatted in Markdown. It is used to sync project context to an external web-based LLM, so clarity, architectural accuracy, and brevity are strictly required.
