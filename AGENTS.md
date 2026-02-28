@@ -12,13 +12,13 @@
     - Uses PyQt5 to render the zoomed image in a frameless, always-on-top window with a semi-transparent close `✕` button.
     - `gui/zoom_window.py` overlays a synthetic crosshair at the canvas center (mss bypasses hardware cursor).
     - Calls into `core_capture` for all capture and zoom math.
-    - Uses global hotkeys (`keyboard`) to toggle visibility and exit.
+    - **Phase 2:** Capslock dual-mode (toggle <300ms, momentary ≥300ms), Glass Desktop yield (hide when inactive), Ctrl+Scroll zoom (only when active + cursor on primary).
 - **Separation of concerns**: Capture and zoom logic live in `core_capture.py`; `main.py` is purely responsible for UI wiring and display.
 
 ## Dependencies (requirements.txt)
 - `pyqt5`: GUI framework for the zoom window.
 - `mss`: Screen capture around the mouse cursor, primary monitor only.
-- `keyboard`: Global hotkeys (`Esc`, `Ctrl+Space`) to quit / toggle.
+- `keyboard`: Global hotkeys (`Esc` quit, `Capslock` dual-mode toggle/momentary).
 - `fire`: Exposes the `main()` entry point as a CLI via `python-fire`.
 - `pyinstaller`: Used by CI to build a one-file, windowed `.exe`.
 

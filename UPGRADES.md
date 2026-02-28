@@ -30,18 +30,22 @@
 
 ---
 
-## Phase 2: Input & State Management (Functional Upgrades)
+## Phase 2: Global Input & State Machine (Functional Upgrades)
 
-### 2.1 The Tactile Toggle State Machine (Capslock)
+**Objective:** Replace the simple hotkey toggle with a dual-mode state machine. Maintain clinical/industrial aesthetic. No new dependencies.
+
+### 2.1 Capslock Logic (The Primary Switch)
 **Status:** ⬜ Pending
 
-**Logic:** The activation key (default: Capslock) must support dual-mode intent.
+**Monitor:** Listen for both `press` and `release` events on `Capslock` (using `keyboard` library).
 
-**Action:** Implement a state machine using the `keyboard` library that measures the time delta between `key_down` and `key_up`.
-- **Tap** (< 200ms) = Toggle state (On/Off).
-- **Hold** (> 200ms) = Momentary state (Activates on `down`, deactivates on `up`).
+**Timer:** On `press`, record `start_time`.
 
-**Files:** `main.py` (or hotkey module)
+**Logic:**
+- **Release < 300ms:** Register as **Toggle**. Flip the `IS_ACTIVE` state (On → Off or Off → On).
+- **Release ≥ 300ms:** Register as **Momentary**. Set `IS_ACTIVE = False` immediately upon release. (Momentary: activates on press, deactivates on release.)
+
+**Files:** `main.py` (or hotkey/state module)
 
 ---
 
@@ -50,42 +54,81 @@
 
 **Logic:** When Surgical Zoom is inactive, it must not hog the secondary display with a blank or frozen canvas.
 
-**Action:** On deactivate, trigger PyQt5's `.hide()` method to completely drop the application from the rendering stack, revealing any underlying applications (e.g., Discord, terminals). On activate, trigger `.showFullScreen()`.
+**Action:**
+- When `IS_ACTIVE == False`: The PyQt5 window calls `.hide()` to reveal underlying OS/Apps on the secondary monitor.
+- When `IS_ACTIVE == True`: The window calls `.showFullScreen()`.
 
 **Files:** `main.py`, `gui/zoom_window.py`
 
 ---
 
-### 2.3 Isolated Zoom Ratio Adjustment (Ctrl + Scroll)
+### 2.3 Dynamic Zoom (Ctrl + Scroll)
 **Status:** ⬜ Pending
 
-**Logic:** Global hooks for `Ctrl + Scroll` will cause critical interference with primary creative applications.
+**Logic:** Implement a listener for `Ctrl + MouseWheel` to modify `ZOOM_FACTOR`.
 
-**Action:** Implement a conditional event listener. The `Ctrl + Scroll` logic to adjust the zoom multiplier must *only* register if:
-1. The Surgical Zoom state is **ACTIVE**.
-2. The cursor coordinates are currently within the **Primary Monitor** bounds.
+**Constraint:** The listener must *only* modify zoom if:
+1. `IS_ACTIVE == True`
+2. The mouse X, Y are within the **Primary Monitor** bounds
 
-**Files:** `main.py`, `gui/zoom_window.py` (zoom_factor state), `core_capture.py` or capture engine
+**Files:** `main.py`, `gui/zoom_window.py` (zoom_factor state)
 
 ---
 
-## Phase 3: The Proximity HUD (GUI Evolution)
+## Phase 3: Proximity HUD & Coordinate Geofencing (GUI Evolution)
 
-### 3.1 Contextual State Transition – Proximity HUD
+**Objective:** Secondary display acts as a "Contextual Control Panel." No new dependencies.
+
+### 3.1 The Boundary Trigger
 **Status:** ⬜ Pending
 
-**The Core Problem:** When the cursor crosses onto the secondary display, `core_capture.py` intentionally clamps the capture region to the primary monitor's edge. The resulting static image on the secondary display is functionally useless and aesthetically undesirable.
+**Logic:** Continuously monitor absolute cursor position (X, Y).
 
-**The Solution:** Contextual State Transition.
+**Condition:** If `X > Primary_Monitor_Right_Edge` (i.e. `X > Primary_Monitor_Left + Primary_Monitor_Width`), the cursor is on the Secondary Display.
 
-**Action:**
-1. Monitor the cursor's absolute X/Y coordinates.
-2. When the cursor physically crosses the boundary onto the secondary display, intercept this event.
-3. Instead of showing the clamped screen capture, fade or slide in a sleek, semi-transparent PyQt5 overlay ("The HUD") over the Surgical Zoom window.
-4. This HUD will house minimalist, custom-styled dropdowns and sliders for: **Key Mapping**, **Default Zoom Ratio**, and **Toggle/Momentary preferences**.
-5. The moment the cursor crosses back to the Primary Monitor bounds, dissolve the HUD and instantly resume the live `mss` capture feed.
+**Files:** `gui/zoom_window.py`, `core/capture_engine.py`
 
-**Files:** `gui/zoom_window.py`, `core/capture_engine.py` (cursor-in-monitor check), potentially new `gui/hud_overlay.py`
+---
+
+### 3.2 State Transition & HUD Mode
+**Status:** ⬜ Pending
+
+**Standard Operation:** While cursor is on Primary, display the live `mss` capture.
+
+**HUD Mode:** While cursor is on Secondary, stop updating the live capture. Display a semi-transparent, dark-themed **Settings HUD** (PyQt5 overlay) instead.
+
+**Files:** `gui/zoom_window.py`
+
+---
+
+### 3.3 HUD Content (Minimalist/Industrial)
+**Status:** ⬜ Pending
+
+**Controls:**
+1. **Zoom Multiplier Slider** – Visual control for zoom level.
+2. **Key Mapping Dropdown** – Allow user to rebind the toggle key.
+3. **Pen Mode Toggle (Boolean)** – If OFF: normal HUD behavior. If ON: HUD remains invisible even on secondary (prep for future S-Pen coordinate warping).
+
+**Files:** `gui/hud_overlay.py` or `gui/zoom_window.py`
+
+---
+
+### 3.4 Instant Reversion
+**Status:** ⬜ Pending
+
+**Logic:** As soon as `X < Primary_Monitor_Right_Edge` (cursor back on Primary), the HUD must vanish and the live zoom feed must resume instantly.
+
+**Files:** `gui/zoom_window.py`
+
+---
+
+---
+
+## Forensic Constraints (All Phases)
+
+- **No AHK:** All logic must be Python-native (`keyboard`, `PyQt5`).
+- **Coordinate Clamping:** Do **not** remove the logic that prevents "Zoomception." The capture center must stay clamped to the primary monitor edge even when the mouse moves to the secondary display for HUD interaction.
+- **Performance:** HUD rendering must not create a background CPU spike. Use `Qt.WA_TranslucentBackground` for the HUD aesthetic.
 
 ---
 
