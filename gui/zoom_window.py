@@ -13,10 +13,46 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from PyQt5.QtCore import QPoint, QTimer, Qt
-from PyQt5.QtGui import QCursor, QImage, QPixmap, QScreen
+from PyQt5.QtGui import QCursor, QImage, QPainter, QPen, QPixmap, QScreen
 from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from core.capture_engine import CaptureEngine
+from core_capture import compute_capture_dimensions
+
+
+class CursorOverlay(QWidget):
+    """Minimalist synthetic cursor overlay centered on the zoom canvas.
+
+    mss captures bypass the hardware cursor; this static crosshair at the
+    canvas center mimics the real cursor position, since the capture region
+    always tracks the mouse center. No input lag.
+    """
+
+    SIZE = 24
+    ARM_LENGTH = 8
+    LINE_WIDTH = 2
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def paintEvent(self, event: object) -> None:
+        """Draw a minimalist crosshair (white with dark outline) for visibility on any background."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        cx, cy = self.width() // 2, self.height() // 2
+        arm = self.ARM_LENGTH
+
+        # Dark outline first for visibility on light backgrounds
+        painter.setPen(QPen(Qt.black, self.LINE_WIDTH + 2))
+        painter.drawLine(cx - arm, cy, cx + arm, cy)
+        painter.drawLine(cx, cy - arm, cx, cy + arm)
+        # Core crosshair in white
+        painter.setPen(QPen(Qt.white, self.LINE_WIDTH))
+        painter.drawLine(cx - arm, cy, cx + arm, cy)
+        painter.drawLine(cx, cy - arm, cx, cy + arm)
 
 
 class ZoomWindow(QWidget):
@@ -56,7 +92,12 @@ class ZoomWindow(QWidget):
         self.zoom_size = zoom_size
         self.zoom_factor = zoom_factor
         self.update_interval_ms = update_interval_ms
-        self.target_resolution = target_resolution
+        self.target_resolution = target_resolution or (1366, 768)
+
+        # Capture dimensions match target display aspect ratio (anti-pillarboxing)
+        self._capture_width, self._capture_height = compute_capture_dimensions(
+            zoom_size, self.target_resolution[0], self.target_resolution[1]
+        )
 
         self._frame_bytes: Optional[bytes] = None
 
@@ -77,6 +118,10 @@ class ZoomWindow(QWidget):
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
         )
+
+        # Synthetic cursor overlay: static crosshair at center (mss captures bypass hardware cursor)
+        self._cursor_overlay = CursorOverlay(self)
+        self._cursor_overlay.raise_()
 
         self._init_close_button()
         self._place_on_target_screen_fullscreen()
@@ -136,6 +181,18 @@ class ZoomWindow(QWidget):
             self.setGeometry(geometry)
 
         self.showFullScreen()
+        self._center_cursor_overlay()
+
+    def resizeEvent(self, event: object) -> None:
+        """Keep synthetic cursor overlay centered when window resizes."""
+        super().resizeEvent(event)
+        self._center_cursor_overlay()
+
+    def _center_cursor_overlay(self) -> None:
+        """Position the synthetic cursor overlay at the center of the canvas."""
+        cx = (self.width() - self._cursor_overlay.width()) // 2
+        cy = (self.height() - self._cursor_overlay.height()) // 2
+        self._cursor_overlay.move(cx, cy)
 
     def _init_timer(self) -> None:
         """Set up the periodic frame update timer."""
@@ -153,7 +210,7 @@ class ZoomWindow(QWidget):
         cursor_x, cursor_y = cursor_pos.x(), cursor_pos.y()
 
         screenshot = self.engine.capture_cursor_region(
-            cursor_x, cursor_y, self.zoom_size
+            cursor_x, cursor_y, self._capture_width, self._capture_height
         )
 
         self._frame_bytes = screenshot.rgb
@@ -164,8 +221,9 @@ class ZoomWindow(QWidget):
         )
         pixmap = QPixmap.fromImage(qimg)
 
-        target_width = int(self.zoom_size * self.zoom_factor)
-        target_height = int(self.zoom_size * self.zoom_factor)
+        # Scale to fill the target display; aspect ratio already matches (no pillarboxing)
+        target_width = self.target_resolution[0]
+        target_height = self.target_resolution[1]
         pixmap = pixmap.scaled(
             target_width,
             target_height,

@@ -49,20 +49,24 @@ class CaptureEngine:
         return self._primary_monitor
 
     def capture_cursor_region(
-        self, cursor_x: int, cursor_y: int, size: int
+        self, cursor_x: int, cursor_y: int, capture_width: int, capture_height: int
     ) -> ScreenShot:
-        """Capture a cursor-centered square region from the primary monitor.
+        """Capture a cursor-centered rectangular region from the primary monitor.
+
+        The region dimensions should match the target display aspect ratio to
+        prevent pillarboxing when the zoom window is full-screen.
 
         Args:
             cursor_x: Global X coordinate of the cursor.
             cursor_y: Global Y coordinate of the cursor.
-            size: Side length, in pixels, of the square capture region.
+            capture_width: Capture region width in pixels.
+            capture_height: Capture region height in pixels.
 
         Returns:
             An `mss.base.ScreenShot` representing the captured region.
         """
         region: Region = compute_centered_region(
-            cursor_x, cursor_y, self._primary_monitor, size
+            cursor_x, cursor_y, self._primary_monitor, capture_width, capture_height
         )
         LOGGER.debug("Capturing cursor-centered region: %s", region)
         return self._sct.grab(region)

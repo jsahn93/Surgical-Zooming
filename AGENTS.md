@@ -5,10 +5,12 @@
 - **Architecture**:
   - Core module `core_capture.py`:
     - Computes cursor-centered capture regions clamped to the primary monitor.
+    - Capture dimensions match target display aspect ratio (anti-pillarboxing).
     - Performs screen capture with `mss`.
     - Computes zoom window dimensions from configuration values.
   - GUI module `main.py`:
     - Uses PyQt5 to render the zoomed image in a frameless, always-on-top window with a semi-transparent close `✕` button.
+    - `gui/zoom_window.py` overlays a synthetic crosshair at the canvas center (mss bypasses hardware cursor).
     - Calls into `core_capture` for all capture and zoom math.
     - Uses global hotkeys (`keyboard`) to toggle visibility and exit.
 - **Separation of concerns**: Capture and zoom logic live in `core_capture.py`; `main.py` is purely responsible for UI wiring and display.
