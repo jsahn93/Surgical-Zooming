@@ -26,6 +26,7 @@ Thumbs.db
 build/
 dist/
 *.spec
+.tmp.driveupload/
 *.pyz
 *.toc
 desktop.ini
