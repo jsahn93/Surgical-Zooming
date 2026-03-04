@@ -22,3 +22,10 @@ Thumbs.db
 # Cursor / tooling
 .cursor/
 
+# Build artifacts
+build/
+dist/
+*.spec
+*.pyz
+*.toc
+desktop.ini

@@ -11,7 +11,7 @@ GUI is responsible only for display and user interaction, while this module
 handles capture math and core behavior.
 """
 
-from typing import Dict, Mapping, Union
+from typing import Dict, Mapping, Tuple, Union
 
 import mss
 from mss.base import ScreenShot
@@ -36,6 +36,26 @@ def clamp(value: Number, minimum: Number, maximum: Number) -> Number:
     return max(minimum, min(value, maximum))
 
 
+def is_cursor_on_primary(cursor_x: int, cursor_y: int, monitor: MonitorMapping) -> bool:
+    """Return True if the cursor is within the primary monitor bounds.
+
+    Used to gate Ctrl+Scroll zoom (only when cursor is on primary) and
+    Phase 3 proximity HUD (cursor on secondary = show HUD).
+
+    Args:
+        cursor_x: Global X coordinate of the cursor.
+        cursor_y: Global Y coordinate of the cursor.
+        monitor: Monitor descriptor (e.g. from mss.monitors[1]).
+
+    Returns:
+        True if (cursor_x, cursor_y) is inside the monitor rectangle.
+    """
+    left, top = monitor["left"], monitor["top"]
+    right = left + monitor["width"]
+    bottom = top + monitor["height"]
+    return left <= cursor_x < right and top <= cursor_y < bottom
+
+
 def get_primary_monitor(sct: mss.mss) -> MonitorMapping:
     """Return the primary monitor descriptor from an `mss` instance.
 
@@ -49,46 +69,76 @@ def get_primary_monitor(sct: mss.mss) -> MonitorMapping:
     return sct.monitors[1]
 
 
+def compute_capture_dimensions(
+    zoom_size: int,
+    target_width: int,
+    target_height: int,
+) -> Tuple[int, int]:
+    """Compute capture region width and height to match target display aspect ratio.
+
+    Ensures the mss capture region matches the target secondary display's aspect
+    ratio, preventing pillarboxing when the zoom window is full-screen.
+
+    Args:
+        zoom_size: Base dimension (used for the smaller side of the capture).
+        target_width: Target display width in pixels.
+        target_height: Target display height in pixels.
+
+    Returns:
+        Tuple of (capture_width, capture_height) matching target aspect ratio.
+    """
+    if target_height <= 0:
+        return zoom_size, zoom_size
+    aspect_ratio = target_width / target_height
+    # Use height as base; derive width to preserve aspect
+    capture_height = zoom_size
+    capture_width = max(1, int(zoom_size * aspect_ratio))
+    return capture_width, capture_height
+
+
 def compute_centered_region(
     cursor_x: int,
     cursor_y: int,
     monitor: MonitorMapping,
-    size: int,
+    width: int,
+    height: int,
 ) -> Region:
-    """Compute a square capture region centered on the cursor and clamped to a monitor.
+    """Compute a rectangular capture region centered on the cursor and clamped to a monitor.
 
     The region will always stay fully inside the given monitor's bounds, even
-    when the cursor is near the edges.
+    when the cursor is near the edges. Dimensions may be non-square to match
+    the target display aspect ratio (anti-pillarboxing).
 
     Args:
         cursor_x: Global X coordinate of the cursor.
         cursor_y: Global Y coordinate of the cursor.
         monitor: Monitor descriptor (e.g. from `mss.monitors[1]`).
-        size: Side length, in pixels, of the square capture region.
+        width: Capture region width in pixels.
+        height: Capture region height in pixels.
 
     Returns:
         Dictionary describing the region with keys: ``left``, ``top``, ``width``, ``height``.
     """
-
     pm_left = monitor["left"]
     pm_top = monitor["top"]
     pm_right = pm_left + monitor["width"]
     pm_bottom = pm_top + monitor["height"]
 
-    half = size // 2
+    half_w = width // 2
+    half_h = height // 2
 
     # Clamp the center so the capture region stays fully on the monitor
-    cx = int(clamp(cursor_x, pm_left + half, pm_right - half))
-    cy = int(clamp(cursor_y, pm_top + half, pm_bottom - half))
+    cx = int(clamp(cursor_x, pm_left + half_w, pm_right - half_w))
+    cy = int(clamp(cursor_y, pm_top + half_h, pm_bottom - half_h))
 
-    left = cx - half
-    top = cy - half
+    left = cx - half_w
+    top = cy - half_h
 
     return {
         "left": left,
         "top": top,
-        "width": size,
-        "height": size,
+        "width": width,
+        "height": height,
     }
 
 
@@ -97,22 +147,23 @@ def capture_zoom_region(
     cursor_x: int,
     cursor_y: int,
     monitor: MonitorMapping,
-    size: int,
+    width: int,
+    height: int,
 ) -> ScreenShot:
-    """Capture a cursor-centered square region from the specified monitor.
+    """Capture a cursor-centered rectangular region from the specified monitor.
 
     Args:
         sct: Active `mss` screen capture instance.
         cursor_x: Global X coordinate of the cursor.
         cursor_y: Global Y coordinate of the cursor.
         monitor: Monitor descriptor (typically the primary monitor).
-        size: Side length, in pixels, of the square capture region.
+        width: Capture region width in pixels.
+        height: Capture region height in pixels.
 
     Returns:
         An `mss.base.ScreenShot` object representing the captured region.
     """
-
-    region = compute_centered_region(cursor_x, cursor_y, monitor, size)
+    region = compute_centered_region(cursor_x, cursor_y, monitor, width, height)
     return sct.grab(region)
 
 
