@@ -36,6 +36,26 @@ def clamp(value: Number, minimum: Number, maximum: Number) -> Number:
     return max(minimum, min(value, maximum))
 
 
+def is_cursor_on_primary(cursor_x: int, cursor_y: int, monitor: MonitorMapping) -> bool:
+    """Return True if the cursor is within the primary monitor bounds.
+
+    Used to gate Ctrl+Scroll zoom (only when cursor is on primary) and
+    Phase 3 proximity HUD (cursor on secondary = show HUD).
+
+    Args:
+        cursor_x: Global X coordinate of the cursor.
+        cursor_y: Global Y coordinate of the cursor.
+        monitor: Monitor descriptor (e.g. from mss.monitors[1]).
+
+    Returns:
+        True if (cursor_x, cursor_y) is inside the monitor rectangle.
+    """
+    left, top = monitor["left"], monitor["top"]
+    right = left + monitor["width"]
+    bottom = top + monitor["height"]
+    return left <= cursor_x < right and top <= cursor_y < bottom
+
+
 def get_primary_monitor(sct: mss.mss) -> MonitorMapping:
     """Return the primary monitor descriptor from an `mss` instance.
 

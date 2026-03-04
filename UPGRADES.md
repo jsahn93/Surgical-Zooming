@@ -35,7 +35,7 @@
 **Objective:** Replace the simple hotkey toggle with a dual-mode state machine. Maintain clinical/industrial aesthetic. No new dependencies.
 
 ### 2.1 Capslock Logic (The Primary Switch)
-**Status:** ⬜ Pending
+**Status:** ✅ Implemented
 
 **Monitor:** Listen for both `press` and `release` events on `Capslock` (using `keyboard` library).
 
@@ -50,7 +50,7 @@
 ---
 
 ### 2.2 The "Glass Desktop" Yield
-**Status:** ⬜ Pending
+**Status:** ✅ Implemented
 
 **Logic:** When Surgical Zoom is inactive, it must not hog the secondary display with a blank or frozen canvas.
 
@@ -63,7 +63,7 @@
 ---
 
 ### 2.3 Dynamic Zoom (Ctrl + Scroll)
-**Status:** ⬜ Pending
+**Status:** ✅ Implemented
 
 **Logic:** Implement a listener for `Ctrl + MouseWheel` to modify `ZOOM_FACTOR`.
 
@@ -145,3 +145,8 @@
 - **Phase 1** (branch: `feature/phase-1-visual-stability`):
   - **1.1** Aspect ratio lock: `compute_capture_dimensions()` in `core_capture.py` derives capture width/height from target display; `compute_centered_region` and `CaptureEngine.capture_cursor_region` accept rectangular dimensions; ZoomWindow scales pixmap to fill target resolution.
   - **1.2** Synthetic cursor: `CursorOverlay` widget in `gui/zoom_window.py` draws a minimalist white crosshair with dark outline, centered on canvas; `WA_TransparentForMouseEvents` so it does not block input.
+- **Phase 2** (re-implemented for Python 3.11 / 64-bit):
+  - **2.1** Capslock dual-mode: `keyboard.on_press_key` / `on_release_key`; <300ms = toggle, ≥300ms = momentary.
+  - **2.2** Glass Desktop: window starts hidden; `hide()` / `showFullScreen()` from `IS_ACTIVE`; `update_frame` skips when hidden.
+  - **2.3** Ctrl+Scroll: `input_hooks.py` with 64-bit-safe ctypes (SetWindowsHookExW, GetModuleHandleW restype/argtypes); zoom only when active and cursor on primary; zoom_factor 0.5–4.0.
+  - **core_capture**: `is_cursor_on_primary()` for primary bounds.
