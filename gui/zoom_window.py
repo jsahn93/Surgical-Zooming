@@ -121,7 +121,7 @@ class ProximityHUD(QFrame):
         initial_zoom: float,
         on_zoom_changed: Any,
         initial_precision: bool = True,
-        initial_toggle_bind: str = "caps_lock",
+        initial_toggle_bind: str = "ctrl+caps_lock",
         on_toggle_rebind: Any | None = None,
         on_reset_defaults: Any | None = None,
     ) -> None:
@@ -271,7 +271,7 @@ class ProximityHUD(QFrame):
         default_zoom = 2.0
         self.set_zoom_value(default_zoom)
         self._precision_check.setChecked(True)
-        self.set_toggle_bind("caps_lock")
+        self.set_toggle_bind("ctrl+caps_lock")
 
 
 class ZoomWindow(QWidget):
@@ -400,7 +400,7 @@ class ZoomWindow(QWidget):
             if self._bridge is None:
                 return
             # Foundational defaults
-            self._bridge.set_toggle_bind("caps_lock")
+            self._bridge.set_toggle_bind("ctrl+caps_lock")
             self._bridge.set_zoom_factor(2.0)
             self._bridge.set_precision_mode(True)
 
@@ -409,7 +409,7 @@ class ZoomWindow(QWidget):
             initial_zoom=self._zoom_factor,
             on_zoom_changed=self._bridge.set_zoom_factor,
             initial_precision=self._bridge.is_precision_mode,
-            initial_toggle_bind=getattr(self._bridge, "toggle_bind", "caps_lock"),
+            initial_toggle_bind=getattr(self._bridge, "toggle_bind", "ctrl+caps_lock"),
             on_toggle_rebind=self._bridge.start_rebinding,
             on_reset_defaults=_reset_defaults,
         )

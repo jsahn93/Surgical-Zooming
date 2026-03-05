@@ -15,7 +15,6 @@ import sys
 import threading
 import time
 from ctypes import byref, c_int, windll
-from ctypes import wintypes
 
 from pynput import keyboard as pynput_keyboard
 from pynput import mouse as pynput_mouse
@@ -40,7 +39,6 @@ MOUSE_SPEED_PRECISION = 4
 
 ZOOM_SIZE: int = 300
 ZOOM_FACTOR: float = 2.0
-CAPSLOCK_HOLD_THRESHOLD_MS: float = 300
 # Fallback if no secondary display is found (removed hardcoding; used only as last resort)
 DEFAULT_TARGET_RESOLUTION: tuple[int, int] = (1366, 768)
 
@@ -52,45 +50,6 @@ SCROLL_THROTTLE_MS: int = 16
 
 # Proximity HUD: poll interval for cursor vs primary monitor boundary (ms)
 PROXIMITY_POLL_MS: int = 50
-
-
-def _normalize_toggle_keys() -> None:
-    """Normalize Caps Lock, Num Lock, and Scroll Lock to OFF on Windows startup.
-
-    This runs before any GUI or background listeners are initialized so that
-    the OS toggle state is in a known, unlocked configuration. On non-Windows
-    platforms it is a no-op.
-    """
-    if sys.platform != "win32":
-        return
-
-    try:
-        controller = pynput_keyboard.Controller()
-    except Exception:
-        LOGGER.debug("Failed to construct pynput keyboard controller", exc_info=True)
-        return
-
-    # Virtual-key codes for toggle keys
-    toggle_map: list[tuple[int, pynput_keyboard.Key]] = [
-        (0x14, pynput_keyboard.Key.caps_lock),
-        (0x90, pynput_keyboard.Key.num_lock),
-        (0x91, pynput_keyboard.Key.scroll_lock),
-    ]
-
-    for vk, key in toggle_map:
-        try:
-            # GetKeyState low-order bit is 1 when the toggle is ON.
-            state = windll.user32.GetKeyState(vk)
-            if state & 1:
-                controller.press(key)
-                controller.release(key)
-        except Exception:
-            LOGGER.debug("Failed to normalize toggle key vk=%s", vk, exc_info=True)
-
-
-def normalize_keyboard_state() -> None:
-    """Public wrapper to normalize keyboard toggle state (Caps/Num/Scroll OFF where possible)."""
-    _normalize_toggle_keys()
 
 
 def resolve_resource_path(relative_path: str) -> str:
@@ -143,7 +102,7 @@ class SettingsManager:
         self,
         monitor_index: int | None = None,
         zoom_factor: float = 2.0,
-        toggle_bind: str = "caps_lock",
+        toggle_bind: str = "ctrl+caps_lock",
         precision_mode: bool = True,
         path: str = SETTINGS_PATH,
     ) -> None:
@@ -167,7 +126,7 @@ class SettingsManager:
 
         monitor_index = data.get("monitor_index")
         zoom_factor = float(data.get("zoom_factor", 2.0))
-        toggle_bind = str(data.get("toggle_bind", "caps_lock"))
+        toggle_bind = str(data.get("toggle_bind", "ctrl+caps_lock"))
         precision_mode = bool(data.get("precision_mode", True))
         return cls(
             monitor_index=monitor_index,
@@ -220,7 +179,7 @@ class StateBridge(QObject):
         zoom_min: float = 0.5,
         zoom_max: float = 4.0,
         initial_precision_mode: bool = True,
-        initial_toggle_bind: str = "caps_lock",
+        initial_toggle_bind: str = "ctrl+caps_lock",
     ) -> None:
         super().__init__()
         self._is_active = False
@@ -236,6 +195,8 @@ class StateBridge(QObject):
         self._precision_mode = bool(initial_precision_mode)
         self._toggle_bind = initial_toggle_bind
         self._is_rebinding = False
+        self._pressed_combo: set[str] = set()
+        self._high_water_mark: set[str] = set()
 
     @property
     def is_rebinding(self) -> bool:
@@ -270,12 +231,71 @@ class StateBridge(QObject):
         self.toggle_bind_changed.emit(value)
 
     def start_rebinding(self) -> None:
-        """Enter rebinding mode; next key or mouse click updates the toggle bind."""
-        self.is_rebinding = True
+        """Enter rebinding mode; next combo of inputs updates the toggle bind.
+
+        This method also clears any previously tracked combo state so that the
+        next non-empty "high-water" combination of keys/buttons becomes the
+        new binding once all inputs are released.
+        """
+        with self._lock:
+            self._is_rebinding = True
+            self._pressed_combo.clear()
+            self._high_water_mark.clear()
 
     def cancel_rebinding(self) -> None:
         """Exit rebinding mode without changing the current toggle bind."""
         self.is_rebinding = False
+
+    def update_combo_state(self, token: str, pressed: bool) -> tuple[set[str], bool]:
+        """Update the currently pressed combo set and high-water mark.
+
+        Args:
+            token: Normalized string for a key or mouse button (for example,
+                ``\"ctrl\"``, ``\"caps_lock\"``, or ``\"button.x1\"``).
+            pressed: ``True`` when the input is pressed, ``False`` when
+                released.
+
+        Returns:
+            A tuple of:
+
+            * A snapshot of the currently pressed combo set.
+            * A boolean indicating whether the bridge is currently in
+              rebinding mode.
+        """
+        with self._lock:
+            if pressed:
+                self._pressed_combo.add(token)
+                if len(self._pressed_combo) > len(self._high_water_mark):
+                    self._high_water_mark = set(self._pressed_combo)
+            else:
+                self._pressed_combo.discard(token)
+
+            current = set(self._pressed_combo)
+            is_rebinding = self._is_rebinding
+
+        return current, is_rebinding
+
+    def finalize_rebinding_if_idle(self) -> None:
+        """Commit the high-water combo when all inputs are released.
+
+        When in rebinding mode and the currently pressed combo set becomes
+        empty, this method converts the recorded high-water mark into a
+        ``\"+\"``-joined toggle binding string and updates ``toggle_bind``.
+        """
+        with self._lock:
+            if not self._is_rebinding:
+                return
+            if self._pressed_combo:
+                return
+            if not self._high_water_mark:
+                self._is_rebinding = False
+                return
+
+            parts = sorted(self._high_water_mark)
+            self._is_rebinding = False
+
+        bind_str = "+".join(parts)
+        self.set_toggle_bind(bind_str)
 
     def set_zoom_factor(self, value: float) -> None:
         """Set zoom factor from GUI (e.g. HUD slider); clamps and emits on main thread."""
@@ -323,44 +343,22 @@ def start_input_hooks(
     bridge: StateBridge,
     engine: CaptureEngine,
 ) -> None:
-    """Register Esc, dual-mode toggle bind, and Ctrl+Scroll via pynput. Only emit signals."""
+    """Register global input hooks and delegate zoom toggling via the bridge.
+
+    Keyboard and mouse listeners share a single logical "currently pressed"
+    set so that combinations like ``\"ctrl+caps_lock\"`` or
+    ``\"shift+button.x2\"`` can be used both for normal operation and
+    high-water rebinding.
+    """
 
     def quit_app() -> None:
         bridge.quit_requested.emit()
-
-    def _ensure_capslock_off_if_active() -> None:
-        """When active and bound to Caps Lock, enforce OS Caps Lock OFF via corrective pulse."""
-        if sys.platform != "win32":
-            return
-        try:
-            current_bind = bridge.toggle_bind
-            if current_bind != "caps_lock":
-                return
-
-            state = windll.user32.GetKeyState(0x14)  # VK_CAPITAL
-            if not (state & 1):
-                return
-
-            if not bridge.is_active:
-                return
-
-            controller = pynput_keyboard.Controller()
-            controller.press(pynput_keyboard.Key.caps_lock)
-            controller.release(pynput_keyboard.Key.caps_lock)
-            LOGGER.warning(
-                "StateAuthority: Detected Caps Lock ON while app active; sent corrective pulse."
-            )
-        except Exception:
-            LOGGER.debug(
-                "StateAuthority: Failed to enforce Caps Lock OFF", exc_info=True
-            )
 
     def _on_toggle_press() -> None:
         """Simple toggle: flip active state on each trigger press."""
         new_state = not bridge.is_active
         bridge._set_active(new_state)
         bridge.active_changed.emit(new_state)
-        _ensure_capslock_off_if_active()
 
     def _key_to_string(key: pynput_keyboard.Key | pynput_keyboard.KeyCode) -> str:
         """Normalize pynput key objects to a stable, lowercased string.
@@ -380,7 +378,17 @@ def start_input_hooks(
             # Prefer an explicit .name (special keys, e.g. Key.caps_lock)
             name = getattr(key, "name", None)
             if isinstance(name, str) and name:
-                return name.lower()
+                name = name.lower()
+                # Normalize left/right variants to a single logical modifier.
+                if name in {"ctrl_l", "ctrl_r", "ctrl"}:
+                    return "ctrl"
+                if name in {"shift_l", "shift_r", "shift"}:
+                    return "shift"
+                if name in {"alt_l", "alt_r", "alt"}:
+                    return "alt"
+                if name in {"cmd", "cmd_l", "cmd_r", "win_l", "win_r"}:
+                    return "cmd"
+                return name
 
             # Then prefer a character payload (KeyCode or similar)
             char = getattr(key, "char", None)
@@ -416,31 +424,52 @@ def start_input_hooks(
             LOGGER.debug("Failed to normalize mouse button %r", button, exc_info=True)
             return str(button)
 
+    def _parse_toggle_bind(bind: str) -> set[str]:
+        """Split a ``\"+\"``-joined toggle binding string into a combo set."""
+        return {part for part in bind.split("+") if part}
+
+    def _maybe_trigger_combo_toggle(
+        token: str,
+        pressed: bool,
+    ) -> None:
+        """Update combo state and toggle when it exactly matches the binding.
+
+        Normal operation:
+
+        * On each press, update the shared pressed set and, when not rebinding,
+          compare it against the current binding combo. If they are a non-empty
+          exact match, trigger the zoom toggle.
+        * On release, only update combo state (no toggling) so that the
+          high-water logic can detect when all inputs are released.
+        """
+        current_combo, is_rebinding = bridge.update_combo_state(token, pressed)
+
+        # During rebinding we only track high-water combos and wait for idle.
+        if is_rebinding:
+            if not pressed:
+                bridge.finalize_rebinding_if_idle()
+            return
+
+        # Outside of rebinding, toggles are only evaluated on presses.
+        if not pressed:
+            return
+
+        bind_combo = _parse_toggle_bind(bridge.toggle_bind)
+        if not bind_combo:
+            return
+
+        if current_combo == bind_combo:
+            _on_toggle_press()
+
     def on_key_press(key: pynput_keyboard.Key | pynput_keyboard.KeyCode) -> None:
         try:
-            # Dynamic rebinding: intercept first when in rebinding mode.
-            if bridge.is_rebinding:
-                bind_str = _key_to_string(key)
-                bridge.set_toggle_bind(bind_str)
-                bridge.is_rebinding = False
-                return
-
             key_str = _key_to_string(key)
 
             if key == pynput_keyboard.Key.esc:
                 quit_app()
                 return
 
-            current_bind = bridge.toggle_bind
-            # Preserve the fast path for a dedicated Caps Lock binding.
-            if current_bind == "caps_lock" and key == pynput_keyboard.Key.caps_lock:
-                _on_toggle_press()
-                return
-
-            # Generic keyboard binding: resolve key dynamically by attribute.
-            if key_str == current_bind:
-                _on_toggle_press()
-                return
+            _maybe_trigger_combo_toggle(key_str, True)
         except Exception:
             # Never propagate exceptions from background listener threads.
             LOGGER.debug("Exception in keyboard on_press callback", exc_info=True)
@@ -448,43 +477,21 @@ def start_input_hooks(
 
     def on_key_release(key: pynput_keyboard.Key | pynput_keyboard.KeyCode) -> None:
         try:
-            if bridge.is_rebinding:
-                # Ignore releases while rebinding to avoid accidental toggles.
-                return
-
-            # Release no longer participates in dual-mode timing; noop for toggle bind.
-            return
+            key_str = _key_to_string(key)
+            _maybe_trigger_combo_toggle(key_str, False)
         except Exception:
             LOGGER.debug("Exception in keyboard on_release callback", exc_info=True)
             return
 
-    mouse_bind_map = {
-        "button.x1": pynput_mouse.Button.x1,
-        "button.x2": pynput_mouse.Button.x2,
-        "button.middle": pynput_mouse.Button.middle,
-    }
-
     def on_click(x: int, y: int, button: pynput_mouse.Button, pressed: bool) -> None:
         try:
-            # Dynamic rebinding: capture first mouse button when rebinding.
-            if bridge.is_rebinding:
-                if not pressed:
-                    return
-                # Intuitive Guardrail: Never allow Left or Right click to be the trigger
-                if button in [pynput_mouse.Button.left, pynput_mouse.Button.right]:
-                    return
-
-                bind_str = _button_to_string(button)
-                bridge.set_toggle_bind(bind_str)
-                bridge.cancel_rebinding()
+            # Intuitive guardrail: never allow Left or Right click to
+            # participate in combo binding or triggering.
+            if button in (pynput_mouse.Button.left, pynput_mouse.Button.right):
                 return
 
-            target_button = mouse_bind_map.get(bridge.toggle_bind)
-            if target_button is None or button != target_button:
-                return
-            if pressed:
-                _on_toggle_press()
-                return
+            button_str = _button_to_string(button)
+            _maybe_trigger_combo_toggle(button_str, pressed)
         except Exception:
             LOGGER.debug("Exception in mouse on_click callback", exc_info=True)
             return
@@ -520,7 +527,7 @@ def start_input_hooks(
 
 
 def main(monitor_index: int | None = None) -> None:
-    """Entry point. Window starts hidden (Glass Desktop); activate via Capslock.
+    """Entry point. Window starts hidden (Glass Desktop); activate via combo bind.
 
     Args:
         monitor_index: Optional zero-based index into the list returned by
@@ -534,9 +541,6 @@ def main(monitor_index: int | None = None) -> None:
     )
     logger = logging.getLogger(__name__)
     logger.info("Starting Surgical Zooming application.")
-
-    # Normalize OS toggle keys before any GUI or background listeners start.
-    normalize_keyboard_state()
 
     settings = SettingsManager.load()
 

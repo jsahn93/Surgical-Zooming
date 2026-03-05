@@ -3,7 +3,7 @@
 Surgical Zooming is a small PyQt5-based remote desktop zoom tool. It opens a
 frameless, always-on-top window that continuously captures a region around the
 mouse cursor (from the primary monitor only) using `mss` and displays a
-zoomed-in view. Global hotkeys are provided via the `keyboard` library.
+zoomed-in view. Global input hooks are provided via `pynput` and a low-level scroll hook.
 
 ## Features
 
