@@ -49,24 +49,38 @@ class CaptureEngine:
         return self._primary_monitor
 
     def capture_cursor_region(
-        self, cursor_x: int, cursor_y: int, capture_width: int, capture_height: int
+        self,
+        cursor_x: int,
+        cursor_y: int,
+        capture_width: int,
+        capture_height: int,
+        device_pixel_ratio: float = 1.0,
     ) -> ScreenShot:
         """Capture a cursor-centered rectangular region from the primary monitor.
 
-        The region dimensions should match the target display aspect ratio to
-        prevent pillarboxing when the zoom window is full-screen.
+        The region dimensions should match the target display aspect ratio (in
+        physical pixels) to prevent pillarboxing when the zoom window is full-screen.
+        Cursor coordinates are treated as logical when device_pixel_ratio != 1.0
+        and converted to physical inside the core so mss capture aligns with the
+        on-screen cursor.
 
         Args:
-            cursor_x: Global X coordinate of the cursor.
-            cursor_y: Global Y coordinate of the cursor.
-            capture_width: Capture region width in pixels.
-            capture_height: Capture region height in pixels.
+            cursor_x: Global X coordinate of the cursor (logical from Qt).
+            cursor_y: Global Y coordinate of the cursor (logical from Qt).
+            capture_width: Capture region width in physical pixels.
+            capture_height: Capture region height in physical pixels.
+            device_pixel_ratio: Primary screen DPR for logical→physical conversion.
 
         Returns:
             An `mss.base.ScreenShot` representing the captured region.
         """
         region: Region = compute_centered_region(
-            cursor_x, cursor_y, self._primary_monitor, capture_width, capture_height
+            cursor_x,
+            cursor_y,
+            self._primary_monitor,
+            capture_width,
+            capture_height,
+            device_pixel_ratio=device_pixel_ratio,
         )
         LOGGER.debug("Capturing cursor-centered region: %s", region)
         return self._sct.grab(region)

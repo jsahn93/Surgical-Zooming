@@ -27,7 +27,6 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
-    QComboBox,
     QFrame,
     QLabel,
     QPushButton,
@@ -121,10 +120,17 @@ class ProximityHUD(QFrame):
         parent: QWidget,
         initial_zoom: float,
         on_zoom_changed: Any,
+        initial_precision: bool = True,
+        initial_toggle_bind: str = "caps_lock",
+        on_toggle_rebind: Any | None = None,
+        on_reset_defaults: Any | None = None,
     ) -> None:
         super().__init__(parent)
         self.setStyleSheet(HUD_STYLE)
         self.setObjectName("ProximityHUD")
+        self._current_bind = initial_toggle_bind
+        self._on_toggle_rebind = on_toggle_rebind
+        self._on_reset_defaults = on_reset_defaults
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -149,29 +155,84 @@ class ProximityHUD(QFrame):
         self._on_zoom_changed = on_zoom_changed
 
         # Precision Mode (slow cursor when active)
-        self._precision_check = QCheckBox("Precision Mode (Slow Cursor)")
+        self._precision_check = QCheckBox("Precision Mode (Slow Mouse)")
         self._precision_check.setStyleSheet("color: #E0E0E0; font-family: monospace;")
         layout.addWidget(self._precision_check)
 
         # Toggle keybind
-        key_label = QLabel("Activation key")
+        key_label = QLabel("Toggle Bind")
         key_label.setStyleSheet("color: #E0E0E0; font-family: monospace;")
         layout.addWidget(key_label)
-        self._key_combo = QComboBox()
-        self._key_combo.addItems(["Capslock", "Shift", "Alt", "Ctrl"])
-        layout.addWidget(self._key_combo)
+        self._toggle_button = QPushButton(
+            self._format_bind_label(initial_toggle_bind), self
+        )
+        self._toggle_button.setStyleSheet(
+            """
+            QPushButton {
+                color: #FFFFFF;
+                font-family: monospace;
+                padding: 4px 8px;
+                background-color: rgba(60, 60, 60, 220);
+                border-radius: 4px;
+                border: 1px solid rgba(200, 200, 200, 80);
+            }
+            QPushButton:hover {
+                background-color: rgba(90, 90, 90, 230);
+            }
+            QPushButton:pressed {
+                background-color: rgba(40, 40, 40, 230);
+            }
+            """
+        )
+        self._toggle_button.clicked.connect(self._on_toggle_button_clicked)
+        layout.addWidget(self._toggle_button)
 
         # S-Pen Mode (future-proofing): bypass HUD so hardware clicks hit canvas
         self._spen_check = QCheckBox("S-Pen Mode (Bypass HUD)")
         self._spen_check.setStyleSheet("color: #E0E0E0; font-family: monospace;")
         layout.addWidget(self._spen_check)
 
+        # Reset to Default button – universal escape hatch
+        self._reset_button = QPushButton("Reset to Default", self)
+        self._reset_button.setStyleSheet(
+            """
+            QPushButton {
+                color: #FFFFFF;
+                font-family: monospace;
+                padding: 4px 8px;
+                background-color: rgba(80, 30, 30, 220);
+                border-radius: 4px;
+                border: 1px solid rgba(255, 120, 120, 120);
+            }
+            QPushButton:hover {
+                background-color: rgba(140, 40, 40, 240);
+            }
+            QPushButton:pressed {
+                background-color: rgba(60, 20, 20, 230);
+            }
+            """
+        )
+        self._reset_button.clicked.connect(self._on_reset_clicked)
+        layout.addWidget(self._reset_button)
+
         # Force widgets to top/center and prevent slider from being clipped
         layout.addStretch()
+
+        # Apply initial states from settings
+        self._precision_check.setChecked(bool(initial_precision))
 
         self.setMinimumSize(400, 300)
         self.setFixedWidth(260)
         self.adjustSize()
+
+    def _format_bind_label(self, bind: str) -> str:
+        return f"Toggle Bind: {bind}"
+
+    def _on_toggle_button_clicked(self) -> None:
+        """Enter listening mode and delegate rebinding to the bridge callback."""
+        self._toggle_button.setText("Listening... Press any key/click")
+        if callable(self._on_toggle_rebind):
+            self._on_toggle_rebind()
 
     def _on_slider_changed(self, value: int) -> None:
         factor = value / 10.0
@@ -195,6 +256,22 @@ class ProximityHUD(QFrame):
     def on_precision_toggled(self, callback: Any) -> None:
         """Connect Precision Mode checkbox to callback(checked: bool)."""
         self._precision_check.toggled.connect(callback)
+
+    def set_toggle_bind(self, bind: str) -> None:
+        """Update the toggle bind button label from bridge changes."""
+        self._current_bind = bind
+        self._toggle_button.setText(self._format_bind_label(bind))
+
+    def _on_reset_clicked(self) -> None:
+        """Reset bridge and HUD controls back to safe defaults."""
+        if callable(self._on_reset_defaults):
+            self._on_reset_defaults()
+
+        # UI sync: immediately reflect default state
+        default_zoom = 2.0
+        self.set_zoom_value(default_zoom)
+        self._precision_check.setChecked(True)
+        self.set_toggle_bind("caps_lock")
 
 
 class ZoomWindow(QWidget):
@@ -254,13 +331,27 @@ class ZoomWindow(QWidget):
             self._init_hud()
 
     def _update_capture_dimensions(self) -> None:
-        """Recompute capture dimensions from zoom_size, zoom_factor, and target resolution."""
+        """Recompute capture dimensions from zoom_size, zoom_factor, and target display.
+
+        Uses the target screen's physical pixel size (logical size × devicePixelRatio)
+        so anti-pillarboxing aspect ratio is applied after DPI correction, giving
+        1:1 pixel fidelity. Capture dimensions are in physical pixels for mss.
+        """
         effective_size = max(20, int(self.zoom_size / self._zoom_factor))
-        self._capture_width, self._capture_height = compute_capture_dimensions(
-            effective_size,
-            self.target_resolution[0],
-            self.target_resolution[1],
-        )
+        if self._target_screen is not None:
+            geom = self._target_screen.geometry()
+            dpr = self._target_screen.devicePixelRatio()
+            target_phys_w = max(1, int(geom.width() * dpr))
+            target_phys_h = max(1, int(geom.height() * dpr))
+            self._capture_width, self._capture_height = compute_capture_dimensions(
+                effective_size, target_phys_w, target_phys_h
+            )
+        else:
+            self._capture_width, self._capture_height = compute_capture_dimensions(
+                effective_size,
+                self.target_resolution[0],
+                self.target_resolution[1],
+            )
 
     def set_zoom_factor(self, value: float) -> None:
         """Set zoom factor from bridge (main thread); updates capture dimensions."""
@@ -305,15 +396,28 @@ class ZoomWindow(QWidget):
 
     def _init_hud(self) -> None:
         """Create Proximity HUD overlay and connect to bridge. HUD starts hidden."""
+        def _reset_defaults() -> None:
+            if self._bridge is None:
+                return
+            # Foundational defaults
+            self._bridge.set_toggle_bind("caps_lock")
+            self._bridge.set_zoom_factor(2.0)
+            self._bridge.set_precision_mode(True)
+
         self._hud = ProximityHUD(
             self,
             initial_zoom=self._zoom_factor,
             on_zoom_changed=self._bridge.set_zoom_factor,
+            initial_precision=self._bridge.is_precision_mode,
+            initial_toggle_bind=getattr(self._bridge, "toggle_bind", "caps_lock"),
+            on_toggle_rebind=self._bridge.start_rebinding,
+            on_reset_defaults=_reset_defaults,
         )
         self._hud.on_spen_toggled(self._on_spen_bypass_toggled)
         self._hud.on_precision_toggled(
             lambda checked: self._bridge.set_precision_mode(checked)
         )
+        self._bridge.toggle_bind_changed.connect(self._hud.set_toggle_bind)
         self._bridge.hud_visibility_changed.connect(self._on_hud_visibility_changed)
         self._hud.hide()
         self._hud.raise_()
@@ -332,6 +436,7 @@ class ZoomWindow(QWidget):
             return
         if show:
             self._hud.show()
+            self._hud.raise_()
             self._center_hud()
         else:
             self._hud.hide()
@@ -340,8 +445,9 @@ class ZoomWindow(QWidget):
         """Center the HUD overlay in the window."""
         if getattr(self, "_hud", None) is None:
             return
-        hx = (self.width() - self._hud.width()) // 2
-        hy = (self.height() - self._hud.height()) // 2
+        rect = self.rect()
+        hx = rect.x() + (rect.width() - self._hud.width()) // 2
+        hy = rect.y() + (rect.height() - self._hud.height()) // 2
         self._hud.move(hx, hy)
 
     def _init_close_button(self) -> None:
@@ -423,8 +529,13 @@ class ZoomWindow(QWidget):
         cursor_pos: QPoint = QCursor.pos()
         cursor_x, cursor_y = cursor_pos.x(), cursor_pos.y()
 
+        # Primary screen DPR: Qt cursor is logical; core converts to physical for mss
+        app = QApplication.instance()
+        primary = app.primaryScreen() if app else None
+        dpr = float(primary.devicePixelRatio()) if primary else 1.0
+
         screenshot = self.engine.capture_cursor_region(
-            cursor_x, cursor_y, self._capture_width, self._capture_height
+            cursor_x, cursor_y, self._capture_width, self._capture_height, dpr
         )
 
         self._frame_bytes = screenshot.rgb

@@ -96,43 +96,99 @@ def compute_capture_dimensions(
     return capture_width, capture_height
 
 
+def logical_to_physical_cursor(
+    logical_x: Number,
+    logical_y: Number,
+    device_pixel_ratio: float,
+) -> Tuple[int, int]:
+    """Convert logical (Qt) cursor coordinates to physical pixels for mss.
+
+    PyQt5 reports cursor and screen geometry in logical (device-independent)
+    coordinates. mss uses physical pixels. Multiplying by the primary screen's
+    device pixel ratio aligns the two coordinate systems.
+
+    Args:
+        logical_x: Cursor X in logical coordinates.
+        logical_y: Cursor Y in logical coordinates.
+        device_pixel_ratio: Primary screen's devicePixelRatio() (e.g. from QScreen).
+
+    Returns:
+        (physical_x, physical_y) for use with mss capture regions.
+    """
+    physical_x = int(logical_x * device_pixel_ratio)
+    physical_y = int(logical_y * device_pixel_ratio)
+    return physical_x, physical_y
+
+
 def compute_centered_region(
     cursor_x: int,
     cursor_y: int,
     monitor: MonitorMapping,
     width: int,
     height: int,
+    device_pixel_ratio: float = 1.0,
 ) -> Region:
     """Compute a rectangular capture region centered on the cursor and clamped to a monitor.
 
     The region will always stay fully inside the given monitor's bounds, even
     when the cursor is near the edges. Dimensions may be non-square to match
-    the target display aspect ratio (anti-pillarboxing).
+    the target display aspect ratio (anti-pillarboxing). Applied after DPI
+    correction so capture size and aspect ratio are in physical pixels.
+
+    Cursor coordinates are interpreted as logical when device_pixel_ratio != 1.0;
+    they are converted to physical using the primary monitor's DPR before
+    computing the region. Monitor geometry from mss is always in physical pixels.
+
+    Monitor-relative clamping: the primary monitor's left/top are subtracted so
+    that centering and clamping are done in primary-relative space, then the
+    region is mapped back to global physical coordinates for mss. This keeps
+    the math correct regardless of virtual display arrangement (e.g. VDD
+    logically above or left of the main screen).
 
     Args:
-        cursor_x: Global X coordinate of the cursor.
-        cursor_y: Global Y coordinate of the cursor.
-        monitor: Monitor descriptor (e.g. from `mss.monitors[1]`).
-        width: Capture region width in pixels.
-        height: Capture region height in pixels.
+        cursor_x: Global X coordinate of the cursor (logical if device_pixel_ratio != 1).
+        cursor_y: Global Y coordinate of the cursor (logical if device_pixel_ratio != 1).
+        monitor: Primary monitor descriptor in physical pixels (e.g. from `mss.monitors[1]`).
+        width: Capture region width in physical pixels.
+        height: Capture region height in physical pixels.
+        device_pixel_ratio: Primary screen DPR; when not 1.0, cursor_x/y are logical.
 
     Returns:
         Dictionary describing the region with keys: ``left``, ``top``, ``width``, ``height``.
     """
+    # Logical → physical cursor (align PyQt5 and mss coordinate systems)
+    phys_x, phys_y = logical_to_physical_cursor(
+        cursor_x, cursor_y, device_pixel_ratio
+    )
+
+    # Primary monitor geometry in physical pixels (mss)
     pm_left = monitor["left"]
     pm_top = monitor["top"]
-    pm_right = pm_left + monitor["width"]
-    pm_bottom = pm_top + monitor["height"]
+    pm_width = monitor["width"]
+    pm_height = monitor["height"]
+
+    # Monitor-relative cursor and bounds for clamping
+    rel_x = phys_x - pm_left
+    rel_y = phys_y - pm_top
 
     half_w = width // 2
     half_h = height // 2
+    rel_right = pm_width - half_w
+    rel_bottom = pm_height - half_h
+    # Ensure clamp range is valid (e.g. when capture is larger than monitor)
+    cx_max = max(half_w, rel_right)
+    cy_max = max(half_h, rel_bottom)
 
-    # Clamp the center so the capture region stays fully on the monitor
-    cx = int(clamp(cursor_x, pm_left + half_w, pm_right - half_w))
-    cy = int(clamp(cursor_y, pm_top + half_h, pm_bottom - half_h))
+    # Clamp center in primary-relative space so region stays fully on primary
+    cx_rel = int(clamp(rel_x, half_w, cx_max))
+    cy_rel = int(clamp(rel_y, half_h, cy_max))
 
-    left = cx - half_w
-    top = cy - half_h
+    rel_left = cx_rel - half_w
+    rel_top = cy_rel - half_h
+
+    # Map region back to global physical coordinates for mss
+    left = rel_left + pm_left
+    top = rel_top + pm_top
 
     return {
         "left": left,
@@ -149,21 +205,26 @@ def capture_zoom_region(
     monitor: MonitorMapping,
     width: int,
     height: int,
+    device_pixel_ratio: float = 1.0,
 ) -> ScreenShot:
     """Capture a cursor-centered rectangular region from the specified monitor.
 
     Args:
         sct: Active `mss` screen capture instance.
-        cursor_x: Global X coordinate of the cursor.
-        cursor_y: Global Y coordinate of the cursor.
-        monitor: Monitor descriptor (typically the primary monitor).
-        width: Capture region width in pixels.
-        height: Capture region height in pixels.
+        cursor_x: Global X coordinate of the cursor (logical if device_pixel_ratio != 1).
+        cursor_y: Global Y coordinate of the cursor (logical if device_pixel_ratio != 1).
+        monitor: Monitor descriptor in physical pixels (typically the primary monitor).
+        width: Capture region width in physical pixels.
+        height: Capture region height in physical pixels.
+        device_pixel_ratio: Primary screen DPR for logical→physical cursor conversion.
 
     Returns:
         An `mss.base.ScreenShot` object representing the captured region.
     """
-    region = compute_centered_region(cursor_x, cursor_y, monitor, width, height)
+    region = compute_centered_region(
+        cursor_x, cursor_y, monitor, width, height,
+        device_pixel_ratio=device_pixel_ratio,
+    )
     return sct.grab(region)
 
 
