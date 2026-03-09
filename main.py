@@ -643,8 +643,6 @@ def main(monitor_index: int | None = None) -> None:
                     zoom_window.showFullScreen()
                 else:
                     zoom_window.hide()
-                    # Force-Off Yield: ensure keyboard toggle state is normalized when deactivating.
-                    normalize_keyboard_state()
                 update_mouse_speed()
 
             def on_zoom_factor_changed(value: float) -> None:

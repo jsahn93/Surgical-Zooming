@@ -4,9 +4,6 @@
 
 name: PyInstaller Build & Release
 
-permissions:
-  contents: write
-
 on:
   push:
     tags:
@@ -15,6 +12,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -27,6 +27,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest
 
       - name: Build executable with PyInstaller
         run: pyinstaller SurgicalZooming.spec
