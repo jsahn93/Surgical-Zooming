@@ -34,18 +34,18 @@
 
 **Objective:** Replace the simple hotkey toggle with a dual-mode state machine. Maintain clinical/industrial aesthetic. No new dependencies.
 
-### 2.1 Capslock Logic (The Primary Switch)
+### 2.1 Combo Toggle (The Primary Switch)
 **Status:** ✅ Implemented
 
-**Monitor:** Listen for both `press` and `release` events on `Capslock` (using `keyboard` library).
+**Monitor:** Shared “currently pressed” set for keyboard and mouse via `pynput` listeners. No OS state enforcement (no GetKeyState / synthetic pulses).
 
-**Timer:** On `press`, record `start_time`.
+**Default bind:** `Ctrl+Caps Lock`. User can rebind via HUD “Toggle Bind” button.
 
 **Logic:**
-- **Release < 300ms:** Register as **Toggle**. Flip the `IS_ACTIVE` state (On → Off or Off → On).
-- **Release ≥ 300ms:** Register as **Momentary**. Set `IS_ACTIVE = False` immediately upon release. (Momentary: activates on press, deactivates on release.)
+- **Normal operation:** On each press/release, update the pressed set. When the set exactly matches the current `toggle_bind` (e.g. `ctrl+caps_lock` or `shift+button.x2`), trigger zoom toggle. Toggle is evaluated on press only.
+- **Rebinding (high-water):** When user clicks “Listening…”, the app records the maximum combo held during the gesture. When all keys/buttons are released, that combo is saved as the new `toggle_bind`. `button.left` and `button.right` are ignored for binding and triggering.
 
-**Files:** `main.py` (or hotkey/state module)
+**Files:** `main.py` (StateBridge, `start_input_hooks`)
 
 ---
 
@@ -126,7 +126,7 @@
 
 ## Forensic Constraints (All Phases)
 
-- **No AHK:** All logic must be Python-native (`keyboard`, `PyQt5`).
+- **No AHK:** All logic must be Python-native (`pynput`, `PyQt5`).
 - **Coordinate Clamping:** Do **not** remove the logic that prevents "Zoomception." The capture center must stay clamped to the primary monitor edge even when the mouse moves to the secondary display for HUD interaction.
 - **Performance:** HUD rendering must not create a background CPU spike. Use `Qt.WA_TranslucentBackground` for the HUD aesthetic.
 
@@ -142,11 +142,15 @@
 ## Changelog
 *(Add entries when items are implemented.)*
 
+- **Deployment pipeline** (branch: `feature/deploy-pipeline`):
+  - **PyInstaller**: `SurgicalZooming.spec` added — single-file, windowed build; `settings.json` bundled via `datas`; `main.resolve_resource_path()` used for `sys._MEIPASS` when frozen.
+  - **CI/CD**: `.github/workflows/pyinstaller.yml` — trigger on tags `v*`; Windows + Python 3.11; build with PyInstaller; upload `.exe` as artifact and attach to GitHub Release.
+  - **Pathing**: `gui/zoom_window.py` docstring documents that any future file assets must use the app resource-path helper for PyInstaller compatibility.
 - **Phase 1** (branch: `feature/phase-1-visual-stability`):
   - **1.1** Aspect ratio lock: `compute_capture_dimensions()` in `core_capture.py` derives capture width/height from target display; `compute_centered_region` and `CaptureEngine.capture_cursor_region` accept rectangular dimensions; ZoomWindow scales pixmap to fill target resolution.
   - **1.2** Synthetic cursor: `CursorOverlay` widget in `gui/zoom_window.py` draws a minimalist white crosshair with dark outline, centered on canvas; `WA_TransparentForMouseEvents` so it does not block input.
 - **Phase 2** (re-implemented for Python 3.11 / 64-bit):
-  - **2.1** Capslock dual-mode: `keyboard.on_press_key` / `on_release_key`; <300ms = toggle, ≥300ms = momentary.
+  - **2.1** Combo toggle: `pynput` keyboard + mouse listeners; shared pressed set; default bind `ctrl+caps_lock`; high-water rebinding via HUD; no OS toggle-key enforcement.
   - **2.2** Glass Desktop: window starts hidden; `hide()` / `showFullScreen()` from `IS_ACTIVE`; `update_frame` skips when hidden.
   - **2.3** Ctrl+Scroll: `input_hooks.py` with 64-bit-safe ctypes (SetWindowsHookExW, GetModuleHandleW restype/argtypes); zoom only when active and cursor on primary; zoom_factor 0.5–4.0.
   - **core_capture**: `is_cursor_on_primary()` for primary bounds.

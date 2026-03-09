@@ -6,6 +6,11 @@ from the capture engine and other core logic.
 The window is intentionally a "dumb" view: it asks the core capture engine
 for frames around the current cursor position and displays them, without
 performing any capture math itself.
+
+Pathing (PyInstaller): The synthetic crosshair is drawn in-code (QPainter/QPolygonF)
+and does not load external assets. Any future file-based assets (e.g. images, icons)
+must be resolved via a helper that uses sys._MEIPASS when running as a frozen binary
+(see main.resolve_resource_path in the application entry point).
 """
 
 from __future__ import annotations

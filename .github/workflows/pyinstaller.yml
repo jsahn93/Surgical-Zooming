@@ -1,42 +1,43 @@
-name: Build Surgical Zooming Executable
+# Build Surgical Zooming as a single-file Windows .exe and publish to GitHub Release.
+# Runs only on tag push matching v* (e.g. v1.0.0). Uses a clean Windows runner to
+# avoid local path/registry quirks affecting the binary.
+
+name: PyInstaller Build & Release
 
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
 
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          python -m venv .venv
-          .venv\Scripts\python -m pip install --upgrade pip
-          .venv\Scripts\python -m pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Build executable with PyInstaller
-        run: |
-          .venv\Scripts\pyinstaller --noconfirm --onefile --windowed --name "SurgicalZooming" main.py
+        run: pyinstaller SurgicalZooming.spec
 
-      - name: Upload build artifact
+      - name: Upload executable as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SurgicalZooming-windows
+          name: SurgicalZooming-exe
           path: dist/SurgicalZooming.exe
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create GitHub Release and attach executable
         uses: softprops/action-gh-release@v2
         with:
           files: dist/SurgicalZooming.exe
-
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
