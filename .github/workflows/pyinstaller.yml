@@ -44,6 +44,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/SurgicalZooming.exe
-          generate_release_notes: true
+          # Disabled: generate_release_notes can trigger "Resource not accessible by integration" with default GITHUB_TOKEN.
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
